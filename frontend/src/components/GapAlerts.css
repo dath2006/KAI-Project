@@ -1,0 +1,10 @@
+.gap-alerts {
+    background-color: #ffcccc;
+    color: #cc0000;
+    padding: 10px;
+    text-align: center;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    font-weight: bold;
+  }
+  
