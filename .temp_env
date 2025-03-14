@@ -5,3 +5,5 @@ FLASK_APP=backend/app.py
 FLASK_ENV=development
 SLACK_TOKEN=
 SLACK_EXPERT_CHANNEL=#
+SECRET_KEY=sdfsdfsdwerfsxz
+MONGO_URI=mongodb://localhost:27017/knowledge_system
