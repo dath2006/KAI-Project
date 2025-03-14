@@ -1,22 +1,26 @@
-import { User } from '../types/auth';
+import { User } from "../types/auth";
 
 interface LoginResponse {
   token: string;
   user: User;
 }
 
-export async function login(email: string, password: string, role: 'admin' | 'user'): Promise<LoginResponse> {
-  const response = await fetch('http://localhost:5000/api/auth/login', {
-    method: 'POST',
+export async function login(
+  email: string,
+  password: string,
+  role: "admin" | "user"
+): Promise<LoginResponse> {
+  const response = await fetch("http://localhost:8080/api/auth/login", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({ email, password }),
   });
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to login');
+    throw new Error(error.message || "Failed to login");
   }
 
   const data = await response.json();
@@ -27,20 +31,20 @@ export async function signup(
   email: string,
   password: string,
   name: string,
-  role: 'admin' | 'user',
+  role: "admin" | "user",
   field?: string
 ): Promise<LoginResponse> {
-  const response = await fetch('http://localhost:5000/api/auth/signup', {
-    method: 'POST',
+  const response = await fetch("http://localhost:8080/api/auth/signup", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({ email, password, name, role, field }),
   });
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || 'Failed to sign up');
+    throw new Error(error.message || "Failed to sign up");
   }
 
   const data = await response.json();
