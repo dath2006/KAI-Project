@@ -20,6 +20,7 @@ export async function login(
 
   if (!response.ok) {
     const error = await response.json();
+    console.log("error");
     throw new Error(error.message || "Failed to login");
   }
 
