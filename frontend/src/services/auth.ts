@@ -8,14 +8,15 @@ interface LoginResponse {
 export async function login(
   email: string,
   password: string,
-  role: "admin" | "user"
+  role: "admin" | "user",
+  field?: string
 ): Promise<LoginResponse> {
   const response = await fetch("http://localhost:8080/api/auth/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, role, field }),
   });
 
   if (!response.ok) {
