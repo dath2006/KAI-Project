@@ -9,12 +9,25 @@ import numpy as np
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+from pymongo import MongoClient
+from datetime import datetime, timedelta
+import bcrypt
+import jwt
+from config import Config
+from functools import wraps
+
+
 # Load environment variables
 load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+app.config.from_object(Config)
+
+# MongoDB connection
+client = MongoClient(Config.MONGO_URI)
+db = client.knowledge_system
 
 # Neo4j connection
 uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
@@ -31,7 +44,161 @@ slack_token = os.getenv("SLACK_TOKEN")
 slack_client = WebClient(token=slack_token) if slack_token else None
 expert_channel = os.getenv("SLACK_EXPERT_CHANNEL", "#knowledge-experts")
 
+
+
+def generate_token(user_id, role):
+    expiration = datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
+    return jwt.encode(
+        {'user_id': str(user_id), 'role': role, 'exp': expiration},
+        Config.SECRET_KEY,
+        algorithm='HS256'
+    )
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'message': 'Token is missing'}), 401
+        try:
+            token = token.split('Bearer ')[1]
+            data = jwt.decode(token, Config.SECRET_KEY, algorithms=['HS256'])
+            current_user = db.users.find_one({'_id': data['user_id']})
+            if not current_user:
+                return jsonify({'message': 'Invalid token'}), 401
+            return f(current_user, *args, **kwargs)
+        except Exception as e:
+            return jsonify({'message': 'Invalid token'}), 401
+    return decorated
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'message': 'Token is missing'}), 401
+        try:
+            token = token.split('Bearer ')[1]
+            data = jwt.decode(token, Config.SECRET_KEY, algorithms=['HS256'])
+            if data['role'] != 'admin':
+                return jsonify({'message': 'Admin privileges required'}), 403
+            current_user = db.users.find_one({'_id': data['user_id']})
+            if not current_user:
+                return jsonify({'message': 'Invalid token'}), 401
+            return f(current_user, *args, **kwargs)
+        except Exception as e:
+            return jsonify({'message': 'Invalid token'}), 401
+    return decorated
+
 # API Routes
+@app.route('/api/auth/signup', methods=['POST'])
+def signup():
+    data = request.get_json()
+
+    if db.users.find_one({'email': data['email']}):
+        return jsonify({'message': 'Email already registered'}), 400
+
+    hashed_password = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt())
+
+    user = {
+        'email': data['email'],
+        'password': hashed_password,
+        'name': data['name'],
+        'role': data['role'],
+        'created_at': datetime.utcnow()
+    }
+
+    if data['role'] == 'user' and 'field' in data:
+        user['field'] = data['field']
+
+    result = db.users.insert_one(user)
+    token = generate_token(str(result.inserted_id), data['role'])
+
+    return jsonify({
+        'token': token,
+        'user': {
+            'id': str(result.inserted_id),
+            'email': data['email'],
+            'name': data['name'],
+            'role': data['role'],
+            'field': data.get('field')
+        }
+    }), 201
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    user = db.users.find_one({'email': data['email']})
+
+    if not user or not bcrypt.checkpw(data['password'].encode('utf-8'), user['password']):
+        return jsonify({'message': 'Invalid credentials'}), 401
+
+    token = generate_token(str(user['_id']), user['role'])
+
+    return jsonify({
+        'token': token,
+        'user': {
+            'id': str(user['_id']),
+            'email': user['email'],
+            'name': user['name'],
+            'role': user['role'],
+            'field': user.get('field')
+        }
+    })
+
+
+@app.route('/api/knowledge', methods=['POST'])
+@token_required
+def create_knowledge(current_user):
+    data = request.get_json()
+    knowledge = {
+        'title': data['title'],
+        'content': data['content'],
+        'field': data['field'],
+        'author_id': str(current_user['_id']),
+        'created_at': datetime.utcnow(),
+        'updated_at': datetime.utcnow()
+    }
+    result = db.knowledge.insert_one(knowledge)
+    return jsonify({'message': 'Knowledge created', 'id': str(result.inserted_id)}), 201
+
+
+@app.route('/api/knowledge', methods=['GET'])
+@token_required
+def search_knowledge(current_user):
+    query = request.args.get('q', '')
+    field = request.args.get('field', '')
+
+    filter_query = {}
+    if query:
+        filter_query['$text'] = {'$search': query}
+    if field:
+        filter_query['field'] = field
+
+    knowledge_items = list(db.knowledge.find(filter_query).sort('created_at', -1))
+    for item in knowledge_items:
+        item['_id'] = str(item['_id'])
+
+    return jsonify(knowledge_items)
+
+
+# @app.route('/api/knowledge/gaps', methods=['GET'])
+# @admin_required
+# def get_knowledge_gaps(current_user):
+#     pipeline = [
+#         {'$group': {
+#             '_id': '$field',
+#             'count': {'$sum': 1}
+#         }},
+#         {'$sort': {'count': 1}}
+#     ]
+#     gaps = list(db.knowledge.aggregate(pipeline))
+#     return jsonify(gaps)
+#
+
+
+
 @app.route('/api/search', methods=['POST'])
 def search():
     data = request.json
@@ -269,7 +436,11 @@ def notify_experts_about_gaps(gaps, query):
         )
     except SlackApiError as e:
         print(f"Error sending Slack notification: {e.response['error']}")
-        
+
+
+
 
 if __name__ == '__main__':
+    # Create text index for search
+    db.knowledge.create_index([('title', 'text'), ('content', 'text')])
     app.run(debug=True,port=8080)
