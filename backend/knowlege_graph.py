@@ -29,7 +29,7 @@ class KnowledgeGraph:
             
             logging.info("Database schema initialized")
             
-    def add_document(self, title, content, doc_type="pdf"):
+    def add_document(self, knowledge):
         """
         Add a document to the knowledge graph
         """
@@ -37,8 +37,8 @@ class KnowledgeGraph:
         
         with self.driver.session() as session:
             session.run(
-                "CREATE (d:Document {id: $id, title: $title, content: $content, type: $type, created_at: datetime()})",
-                id=doc_id, title=title, content=content, type=doc_type
+                "CREATE (d:Document {id: $id, title: $title, filename: $filename, original_filename: $original_filename, author_id: $author_id, author_name: $author_name, field: $field, keywords: $keywords, fileLink: $fileLink, meme_type: $meme_type, created_at: datetime()})",
+                id=doc_id, title=knowledge['title'], filename=knowledge['filename'], original_filename=knowledge['original_filename'], author_id=knowledge['author_id'], author_name=knowledge['author_name'], field=knowledge['field'], keywords=knowledge['keywords'], fileLink=knowledge['fileLink'], meme_type=knowledge['meme_type']
             )
             
         return doc_id

@@ -16,7 +16,8 @@ import jwt
 from config import Config
 from functools import wraps
 from bson import ObjectId
-
+from pdf_processor import process_pdf
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -52,6 +53,10 @@ ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'txt', 'md', 'ppt', 'pptx'}
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
+async def file_process(file_path):
+    metadata_result = await process_pdf(file_path)
+    return metadata_result
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -66,72 +71,108 @@ def generate_token(user_id, role):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
-        if not token:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
             return jsonify({'message': 'Token is missing'}), 401
+        
         try:
-            token = token.split('Bearer ')[1]
-            data = jwt.decode(token, Config.SECRET_KEY, algorithms=['HS256'])
-            current_user = db.users.find_one({'_id': data['user_id']})
+            # Extract token from "Bearer <token>"
+            token = auth_header.split(' ')[1] if auth_header.startswith('Bearer ') else auth_header
+            
+            # Decode token
+            payload = jwt.decode(token, Config.SECRET_KEY, algorithms=['HS256'])
+            
+            # Convert string ID to ObjectId for MongoDB query
+            user_id = ObjectId(payload['user_id'])
+            current_user = db.users.find_one({'_id': user_id})
+            
             if not current_user:
-                return jsonify({'message': 'Invalid token'}), 401
+                return jsonify({'message': 'User not found'}), 401
+                
+            # Convert ObjectId to string for JSON serialization
+            current_user['_id'] = str(current_user['_id'])
             return f(current_user, *args, **kwargs)
-        except Exception as e:
+            
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
             return jsonify({'message': 'Invalid token'}), 401
+        except Exception as e:
+            return jsonify({'message': str(e)}), 401
+            
     return decorated
 
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
-        if not token:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
             return jsonify({'message': 'Token is missing'}), 401
+        
         try:
-            token = token.split('Bearer ')[1]
-            data = jwt.decode(token, Config.SECRET_KEY, algorithms=['HS256'])
-            if data['role'] != 'admin':
+            # Extract token from "Bearer <token>"
+            token = auth_header.split(' ')[1] if auth_header.startswith('Bearer ') else auth_header
+            
+            # Decode token
+            payload = jwt.decode(token, Config.SECRET_KEY, algorithms=['HS256'])
+            
+            if payload['role'] != 'admin':
                 return jsonify({'message': 'Admin privileges required'}), 403
-            current_user = db.users.find_one({'_id': data['user_id']})
+                
+            # Convert string ID to ObjectId for MongoDB query
+            user_id = ObjectId(payload['user_id'])
+            current_user = db.users.find_one({'_id': user_id})
+            
             if not current_user:
-                return jsonify({'message': 'Invalid token'}), 401
+                return jsonify({'message': 'User not found'}), 401
+                
+            # Convert ObjectId to string for JSON serialization
+            current_user['_id'] = str(current_user['_id'])
             return f(current_user, *args, **kwargs)
-        except Exception as e:
+            
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
             return jsonify({'message': 'Invalid token'}), 401
+        except Exception as e:
+            return jsonify({'message': str(e)}), 401
+            
     return decorated
 
 # API Routes
 @app.route('/api/auth/signup', methods=['POST'])
 def signup():
     data = request.get_json()
-
+    
     if db.users.find_one({'email': data['email']}):
         return jsonify({'message': 'Email already registered'}), 400
-
+    
     hashed_password = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt())
-
+    
     user = {
+        '_id': ObjectId(),
         'email': data['email'],
         'password': hashed_password,
         'name': data['name'],
         'role': data['role'],
         'created_at': datetime.utcnow()
     }
-
+    
     if data['role'] == 'user' and 'field' in data:
         user['field'] = data['field']
-
-    result = db.users.insert_one(user)
-    token = generate_token(str(result.inserted_id), data['role'])
-
+    
+    db.users.insert_one(user)
+    
+    # Generate token
+    token = generate_token(user['_id'], data['role'])
+    
+    # Convert ObjectId to string for response
+    user['_id'] = str(user['_id'])
+    del user['password']  # Remove password from response
+    
     return jsonify({
         'token': token,
-        'user': {
-            'id': str(result.inserted_id),
-            'email': data['email'],
-            'name': data['name'],
-            'role': data['role'],
-            'field': data.get('field')
-        }
+        'user': user
     }), 201
 
 
@@ -139,27 +180,31 @@ def signup():
 def login():
     data = request.get_json()
     user = db.users.find_one({'email': data['email']})
-
+    
     if not user or not bcrypt.checkpw(data['password'].encode('utf-8'), user['password']):
         return jsonify({'message': 'Invalid credentials'}), 401
-
-    token = generate_token(str(user['_id']), user['role'])
-
+    
+    # Generate token
+    token = generate_token(user['_id'], user['role'])
+    
+    # Convert ObjectId to string and remove password for response
+    user_response = {
+        'id': str(user['_id']),
+        'email': user['email'],
+        'name': user['name'],
+        'role': user['role'],
+        'field': user.get('field')
+    }
+    
     return jsonify({
         'token': token,
-        'user': {
-            'id': str(user['_id']),
-            'email': user['email'],
-            'name': user['name'],
-            'role': user['role'],
-            'field': user.get('field')
-        }
+        'user': user_response
     })
 
 
 @app.route('/api/knowledge/upload', methods=['POST'])
 @token_required
-def upload_knowledge(current_user):
+def upload_knowledge(current_user):     
     if 'file' not in request.files:
         return jsonify({'message': 'No file provided'}), 400
     
@@ -172,25 +217,56 @@ def upload_knowledge(current_user):
     if not allowed_file(file.filename):
         return jsonify({'message': 'File type not allowed'}), 400
     
-    filename = secure_filename(file.filename)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    unique_filename = f"{timestamp}_{filename}"
-    file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
-    file.save(file_path)
-    
-    knowledge = {
-        'title': topic,
-        'filename': unique_filename,
-        'original_filename': filename,
-        'author_id': str(current_user['_id']),
-        'author_name': current_user['name'],
-        'field': current_user.get('field'),
-        'type': 'file',
-        'created_at': datetime.utcnow()
-    }
-    
-    db.knowledge.insert_one(knowledge)
-    return jsonify({'message': 'File uploaded successfully'}), 201
+    try:
+        filename = secure_filename(file.filename)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        unique_filename = f"{timestamp}_{filename}"
+        file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        file.save(file_path)
+        
+        # Process the file
+        try:
+            metadata_result = asyncio.run(file_process(file_path))
+        except Exception as e:
+            print(f"Error processing file: {str(e)}")
+            metadata_result = {
+                'keywords': [],
+                'fileLink': file_path,
+                'meme_type': file.content_type
+            }
+
+        knowledge = {
+            'title': topic,
+            'filename': unique_filename,
+            'original_filename': filename,
+            'author_id': str(current_user['_id']),
+            'author_name': current_user['name'],
+            'field': current_user.get('field'),
+            'keywords': metadata_result.get('keywords', []),
+            'fileLink': metadata_result.get('fileLink', file_path),
+            'meme_type': metadata_result.get('meme_type', file.content_type),
+            'created_at': datetime.utcnow()
+        }
+        
+        # Add to knowledge graph
+        try:
+            from knowlege_graph import KnowledgeGraph
+            kg = KnowledgeGraph(uri, username, password)
+            doc_id = kg.add_document(knowledge)
+            kg.close()
+        except Exception as e:
+            print(f"Error adding to knowledge graph: {str(e)}")
+            return jsonify({'message': 'Error adding to knowledge graph', 'error': str(e)}), 500
+        
+        return jsonify({
+            'message': 'File uploaded successfully',
+            'document_id': doc_id,
+            'metadata': metadata_result
+        }), 201
+        
+    except Exception as e:
+        print(f"Error in file upload: {str(e)}")
+        return jsonify({'message': 'Error uploading file', 'error': str(e)}), 500
 
 @app.route('/api/admin/knowledge/upload', methods=['POST'])
 @admin_required
@@ -207,25 +283,57 @@ def admin_upload_knowledge(current_user):
     if not allowed_file(file.filename):
         return jsonify({'message': 'File type not allowed'}), 400
     
-    filename = secure_filename(file.filename)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    unique_filename = f"{timestamp}_{filename}"
-    file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
-    file.save(file_path)
-    
-    knowledge = {
-        'title': topic,
-        'filename': unique_filename,
-        'original_filename': filename,
-        'author_id': str(current_user['_id']),
-        'author_name': current_user['name'],
-        'type': 'file',
-        'is_admin_content': True,
-        'created_at': datetime.utcnow()
-    }
-    
-    db.knowledge.insert_one(knowledge)
-    return jsonify({'message': 'File uploaded successfully'}), 201
+    try:
+        filename = secure_filename(file.filename)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        unique_filename = f"{timestamp}_{filename}"
+        file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        file.save(file_path)
+        
+        # Process the file
+        try:
+            metadata_result = asyncio.run(file_process(file_path))
+        except Exception as e:
+            print(f"Error processing file: {str(e)}")
+            metadata_result = {
+                'keywords': [],
+                'fileLink': file_path,
+                'meme_type': file.content_type
+            }
+
+        knowledge = {
+            'title': topic,
+            'filename': unique_filename,
+            'original_filename': filename,
+            'author_id': str(current_user['_id']),
+            'author_name': current_user['name'],
+            'field': current_user.get('field'),
+            'keywords': metadata_result.get('keywords', []),
+            'fileLink': metadata_result.get('fileLink', file_path),
+            'meme_type': metadata_result.get('meme_type', file.content_type),
+            'is_admin_content': True,
+            'created_at': datetime.utcnow()
+        }
+        
+        # Add to knowledge graph
+        try:
+            from knowlege_graph import KnowledgeGraph
+            kg = KnowledgeGraph(uri, username, password)
+            doc_id = kg.add_document(knowledge)
+            kg.close()
+        except Exception as e:
+            print(f"Error adding to knowledge graph: {str(e)}")
+            return jsonify({'message': 'Error adding to knowledge graph', 'error': str(e)}), 500
+        
+        return jsonify({
+            'message': 'File uploaded successfully',
+            'document_id': doc_id,
+            'metadata': metadata_result
+        }), 201
+        
+    except Exception as e:
+        print(f"Error in file upload: {str(e)}")
+        return jsonify({'message': 'Error uploading file', 'error': str(e)}), 500
 
 
 @app.route('/api/knowledge', methods=['GET'])
@@ -292,8 +400,8 @@ def search():
         has_gaps = len(gaps) > 0
         
         # If gaps found, notify experts
-        if has_gaps and slack_client:
-            notify_experts_about_gaps(gaps, query)
+        # if has_gaps and slack_client:
+        #     notify_experts_about_gaps(gaps, query)
         
         return jsonify({
             "results": results,
@@ -415,61 +523,129 @@ def detect_gaps_endpoint():
 
 # Helper functions
 def search_knowledge_graph(query, query_embedding, entities, keywords):
-    # This is a simplified version - in a real implementation, you would:
-    # 1. Use the embedding for semantic search
-    # 2. Use entities and keywords for more targeted retrieval
-    # 3. Combine results based on relevance scores
-    
-    with driver.session() as session:
-        # Find documents relevant to the query
-        result = session.run("""
+    try:
+        with driver.session() as session:
+            # Create Cypher query to match documents
+            cypher_query = """
             MATCH (d:Document)
-            WHERE d.title CONTAINS $keyword OR d.content CONTAINS $keyword
-            OPTIONAL MATCH (d)-[:HAS_TIP]->(t)<-[:PROVIDED]-(e:Expert)
-            RETURN d.id as id, d.title as title, d.content as content, d.source as source,
-                   collect({content: t.content, expert: e.name}) as tips
-            ORDER BY size(tips) DESC
-            LIMIT 10
-        """, keyword=query.lower())
-        
-        docs = []
-        for record in result:
-            # In a real implementation, you would calculate actual semantic similarity scores
-            # between query_embedding and document embeddings stored in Neo4j
-            similarity_score = 0.7  # Placeholder score
+            WHERE 
+                // First check if query matches title (case-insensitive)
+                toLower(d.title) CONTAINS toLower($query)
+                OR
+                // Then check if query matches original filename (case-insensitive)
+                toLower(d.original_filename) CONTAINS toLower($query)
+                OR
+                // Then check if any of the search terms match with keywords array
+                ANY(keyword IN d.keywords 
+                    WHERE ANY(search_term IN $search_terms 
+                        WHERE toLower(keyword) CONTAINS toLower(search_term)))
+            WITH d, 
+                // Calculate relevance score based on matches
+                CASE 
+                    WHEN toLower(d.title) CONTAINS toLower($query) THEN 2  // Title match gets higher score
+                    WHEN toLower(d.original_filename) CONTAINS toLower($query) THEN 1.5  // Filename match gets medium score
+                    ELSE 0
+                END +
+                size([keyword IN d.keywords 
+                    WHERE ANY(search_term IN $search_terms 
+                        WHERE toLower(keyword) CONTAINS toLower(search_term))]) as matching_count
+            RETURN 
+                d.id as id,
+                d.title as title,
+                d.fileLink as fileLink,
+                d.keywords as keywords,
+                d.field as field,
+                d.meme_type as meme_type,
+                d.filename as filename,
+                d.original_filename as original_filename,
+                [keyword IN d.keywords 
+                    WHERE ANY(search_term IN $search_terms 
+                        WHERE toLower(keyword) CONTAINS toLower(search_term))] as matched_keywords,
+                toFloat(matching_count) / (2 + size($search_terms)) as relevance_score,
+                d.author_name as author,
+                toString(d.created_at) as created_at
+            ORDER BY relevance_score DESC
+            """
             
-            docs.append({
-                "id": record["id"],
-                "title": record["title"],
-                "content": record["content"][:200] + "..." if len(record["content"]) > 200 else record["content"],
-                "source": record["source"],
-                "type": "Document",
-                "score": similarity_score,
-                "tips": [tip for tip in record["tips"] if tip["content"] is not None]
+            # Combine all search terms
+            search_terms = set([query] + keywords + entities)
+            
+            # Execute the query
+            result = session.run(cypher_query, {
+                'query': query,
+                'search_terms': list(search_terms)
             })
-    
-    return docs
+            
+            # Process results and group by title
+            grouped_documents = {}
+            for record in result:
+                try:
+                    doc = {
+                        "id": record["id"],
+                        "title": record["title"],
+                        "fileLink": record["fileLink"],
+                        "keywords": record["keywords"],
+                        "matched_keywords": record["matched_keywords"],
+                        "field": record["field"],
+                        "meme_type": record["meme_type"],
+                        "filename": record["filename"],
+                        "original_filename": record["original_filename"],
+                        "score": record["relevance_score"],
+                        "author": record["author"],
+                        "created_at": record["created_at"]
+                    }
+                    
+                    if doc["title"] not in grouped_documents:
+                        grouped_documents[doc["title"]] = []
+                    grouped_documents[doc["title"]].append(doc)
+                    
+                except Exception as e:
+                    print(f"Error processing record: {str(e)}")
+                    continue
+            
+            return grouped_documents
+            
+    except Exception as e:
+        print(f"Error in search_knowledge_graph: {str(e)}")
+        return {}
 
 def identify_knowledge_gaps(query, entities, keywords):
-    gaps = []
-    
-    with driver.session() as session:
-        # Find documents related to the query that don't have expert tips
-        for keyword in keywords:
-            result = session.run("""
-                MATCH (d:Document)
-                WHERE (d.title CONTAINS $keyword OR d.content CONTAINS $keyword)
-                AND NOT (d)-[:HAS_TIP]->()
-                RETURN d.title as topic, d.id as id
-                LIMIT 5
-            """, keyword=keyword)
+    try:
+        with driver.session() as session:
+            # Find documents related to the query
+            cypher_query = """
+            MATCH (d:Document)
+            WHERE 
+                toLower(d.title) CONTAINS toLower($query)
+                OR
+                ANY(keyword IN d.keywords 
+                    WHERE ANY(search_term IN $search_terms 
+                        WHERE toLower(keyword) CONTAINS toLower(search_term)))
+            RETURN DISTINCT d.title as topic, d.id as id
+            LIMIT 5
+            """
             
+            # Combine all search terms
+            search_terms = set([query] + keywords + entities)
+            
+            result = session.run(cypher_query, {
+                'query': query,
+                'search_terms': list(search_terms)
+            })
+            
+            gaps = []
             for record in result:
-                # Avoid duplicates
                 if not any(gap["id"] == record["id"] for gap in gaps):
-                    gaps.append({"topic": record["topic"], "id": record["id"]})
-    
-    return gaps
+                    gaps.append({
+                        "topic": record["topic"],
+                        "id": record["id"]
+                    })
+            
+            return gaps
+            
+    except Exception as e:
+        print(f"Error in identify_knowledge_gaps: {str(e)}")
+        return []
 
 def notify_experts_about_gaps(gaps, query):
     if not slack_client:
