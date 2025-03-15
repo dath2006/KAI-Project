@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 from dotenv import load_dotenv
@@ -8,13 +8,14 @@ import spacy
 import numpy as np
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-
+from werkzeug.utils import secure_filename
 from pymongo import MongoClient
 from datetime import datetime, timedelta
 import bcrypt
 import jwt
 from config import Config
 from functools import wraps
+from bson import ObjectId
 
 
 # Load environment variables
@@ -44,7 +45,15 @@ slack_token = os.getenv("SLACK_TOKEN")
 slack_client = WebClient(token=slack_token) if slack_token else None
 expert_channel = os.getenv("SLACK_EXPERT_CHANNEL", "#knowledge-experts")
 
+# File upload configuration
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'txt', 'md', 'ppt', 'pptx'}
 
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def generate_token(user_id, role):
     expiration = datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
@@ -148,20 +157,75 @@ def login():
     })
 
 
-@app.route('/api/knowledge', methods=['POST'])
+@app.route('/api/knowledge/upload', methods=['POST'])
 @token_required
-def create_knowledge(current_user):
-    data = request.get_json()
+def upload_knowledge(current_user):
+    if 'file' not in request.files:
+        return jsonify({'message': 'No file provided'}), 400
+    
+    file = request.files['file']
+    topic = request.form.get('topic')
+    
+    if not file or not topic:
+        return jsonify({'message': 'File and topic are required'}), 400
+    
+    if not allowed_file(file.filename):
+        return jsonify({'message': 'File type not allowed'}), 400
+    
+    filename = secure_filename(file.filename)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    unique_filename = f"{timestamp}_{filename}"
+    file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+    file.save(file_path)
+    
     knowledge = {
-        'title': data['title'],
-        'content': data['content'],
-        'field': data['field'],
+        'title': topic,
+        'filename': unique_filename,
+        'original_filename': filename,
         'author_id': str(current_user['_id']),
-        'created_at': datetime.utcnow(),
-        'updated_at': datetime.utcnow()
+        'author_name': current_user['name'],
+        'field': current_user.get('field'),
+        'type': 'file',
+        'created_at': datetime.utcnow()
     }
-    result = db.knowledge.insert_one(knowledge)
-    return jsonify({'message': 'Knowledge created', 'id': str(result.inserted_id)}), 201
+    
+    db.knowledge.insert_one(knowledge)
+    return jsonify({'message': 'File uploaded successfully'}), 201
+
+@app.route('/api/admin/knowledge/upload', methods=['POST'])
+@admin_required
+def admin_upload_knowledge(current_user):
+    if 'file' not in request.files:
+        return jsonify({'message': 'No file provided'}), 400
+    
+    file = request.files['file']
+    topic = request.form.get('topic')
+    
+    if not file or not topic:
+        return jsonify({'message': 'File and topic are required'}), 400
+    
+    if not allowed_file(file.filename):
+        return jsonify({'message': 'File type not allowed'}), 400
+    
+    filename = secure_filename(file.filename)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    unique_filename = f"{timestamp}_{filename}"
+    file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+    file.save(file_path)
+    
+    knowledge = {
+        'title': topic,
+        'filename': unique_filename,
+        'original_filename': filename,
+        'author_id': str(current_user['_id']),
+        'author_name': current_user['name'],
+        'type': 'file',
+        'is_admin_content': True,
+        'created_at': datetime.utcnow()
+    }
+    
+    db.knowledge.insert_one(knowledge)
+    return jsonify({'message': 'File uploaded successfully'}), 201
 
 
 @app.route('/api/knowledge', methods=['GET'])
@@ -197,6 +261,10 @@ def search_knowledge(current_user):
 #     return jsonify(gaps)
 #
 
+@app.route('/api/uploads/<filename>')
+@token_required
+def get_file(current_user, filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
 
 @app.route('/api/search', methods=['POST'])
