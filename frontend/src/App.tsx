@@ -1,4 +1,5 @@
 import React from "react";
+import ChatQA from "./pages/ChatQA";
 import {
   BrowserRouter as Router,
   Routes,
@@ -13,6 +14,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import SearchKnowledge from "./pages/SearchKnowledge";
 import ShareKnowledge from "./pages/ShareKnowledge";
 import ChatWithAI from "./pages/ChatWithAI";
+
 
 function App() {
   return (
@@ -57,6 +59,10 @@ function App() {
             <Route path="/user/search" element={<SearchKnowledge />} />
             <Route path="/user/share" element={<ShareKnowledge />} />
             <Route path="/user/chat" element={<ChatWithAI />} />
+
+            {/* Chat QA Route */}
+            <Route path="/user/ai-chat" element={<ChatQA />} />
+
           </Routes>
         </div>
       </Router>

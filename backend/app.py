@@ -520,6 +520,85 @@ def detect_gaps_endpoint():
         print(f"Error detecting gaps: {str(e)}")
         return jsonify({"error": "An error occurred during gap detection"}), 500
 
+@app.route('/api/ai/generate-questions', methods=['POST'])
+@token_required  # Only authenticated users can generate questions
+def generate_questions(current_user):
+    data = request.get_json()
+    topic = data.get('topic')
+    if not topic:
+        return jsonify({"error": "Topic is required"}), 400
+
+    # Call Gemini AI API to generate questions
+    # Replace the URL and parameters with the actual Gemini API endpoint details
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={os.getenv('GEMINI_API_KEY')}"  # Example URL; update as needed
+    headers = {
+        "Authorization": f"Bearer {os.getenv('GEMINI_API_KEY')}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "prompt": f"Generate 10 important questions about {topic}.",
+        "max_tokens": 200  # Adjust as needed
+    }
+    try:
+        response = requests.post(gemini_url, headers=headers, json=payload)
+        response.raise_for_status()
+        questions = response.json().get("questions")
+        if not questions:
+            return jsonify({"error": "No questions generated"}), 500
+        return jsonify({"questions": questions})
+    except Exception as e:
+        print(f"Error generating questions: {e}")
+        return jsonify({"error": "Failed to generate questions"}), 500
+    
+@app.route('/api/ai/summarize-chat', methods=['POST'])
+@token_required  # Only authenticated users can summarize chat
+def summarize_chat(current_user):
+    data = request.get_json()
+    conversation = data.get('conversation')  # Expecting an array of Q&A objects
+    topic = data.get('topic')
+    if not conversation or not topic:
+        return jsonify({"error": "Conversation and topic are required"}), 400
+
+    # Prepare prompt for summarization
+    # For example, "Summarize the following conversation on [topic]: ..."
+    conversation_text = "\n".join(
+        [f"Q: {item['question']}\nA: {item['answer']}" for item in conversation]
+    )
+    prompt = f"Summarize the following conversation on {topic} into a detailed summary:\n{conversation_text}"
+
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={os.getenv('GEMINI_API_KEY')}"  # Example URL; update as needed
+    headers = {
+        "Authorization": f"Bearer {os.getenv('GEMINI_API_KEY')}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "prompt": prompt,
+        "max_tokens": 300  # Adjust as needed for a detailed summary
+    }
+    try:
+        response = requests.post(gemini_url, headers=headers, json=payload)
+        response.raise_for_status()
+        summary = response.json().get("summary")
+        if not summary:
+            return jsonify({"error": "No summary generated"}), 500
+
+        # Store the summary in Neo4j as a ChatSummary document
+        from knowledge_graph import KnowledgeGraph
+        kg = KnowledgeGraph(uri, username, password)
+        summary_doc_id = kg.add_document(
+            title=f"Chat Summary for {topic}",
+            content=summary,
+            doc_type="ChatSummary"
+        )
+        kg.close()
+
+        return jsonify({"summary": summary, "document_id": summary_doc_id})
+    except Exception as e:
+        print(f"Error summarizing chat: {e}")
+        return jsonify({"error": "Failed to summarize chat"}), 500
+
+
+
 
 # Helper functions
 def search_knowledge_graph(query, query_embedding, entities, keywords):
