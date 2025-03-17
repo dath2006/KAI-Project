@@ -4,6 +4,7 @@ import { api } from "../services/auth";
 import { useAuth } from "../context/AuthContext";
 import toast from "react-hot-toast";
 import Navbar from "../components/Navbar";
+import { useNavigate } from "react-router-dom";
 
 export default function ShareKnowledge() {
   const { user } = useAuth();
@@ -11,7 +12,7 @@ export default function ShareKnowledge() {
   const [showOptions, setShowOptions] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-
+  const navigate = useNavigate();
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setShowOptions(true);
@@ -102,6 +103,7 @@ export default function ShareKnowledge() {
                     className="p-6 border-2 border-gray-200 rounded-lg hover:border-blue-500 transition-colors flex flex-col items-center"
                     onClick={() => {
                       /* TODO: Implement chat logic */
+                      navigate("/user/ai-chat");
                     }}
                   >
                     <MessageSquare className="h-12 w-12 text-blue-600 mb-2" />
@@ -111,25 +113,19 @@ export default function ShareKnowledge() {
                     </p>
                   </button>
 
-                  <div className="p-6 border-2 border-gray-200 rounded-lg flex flex-col items-center">
+                  <button
+                    className="p-6 border-2 border-gray-200 rounded-lg hover:border-blue-500 transition-colors flex flex-col items-center"
+                    onClick={() => {
+                      /* TODO: Implement chat logic */
+                      navigate("/user/upload");
+                    }}
+                  >
                     <Upload className="h-12 w-12 text-blue-600 mb-2" />
                     <span className="font-medium">Upload File</span>
                     <p className="text-sm text-gray-500 mt-2 text-center mb-4">
                       Share your knowledge through a document
                     </p>
-                    <input
-                      type="file"
-                      onChange={(e) => setFile(e.target.files?.[0] || null)}
-                      className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                    />
-                    <button
-                      onClick={handleFileUpload}
-                      disabled={!file || uploading}
-                      className="mt-4 w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {uploading ? "Uploading..." : "Upload"}
-                    </button>
-                  </div>
+                  </button>
                 </div>
               </div>
             )}

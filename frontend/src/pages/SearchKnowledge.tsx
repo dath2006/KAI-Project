@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Search, ExternalLink } from "lucide-react";
+import { Search, ExternalLink, X } from "lucide-react";
+import DOMPurify from "dompurify";
 
 interface SearchResult {
   id: string;
@@ -14,6 +15,8 @@ interface SearchResult {
   score: number;
   author: string;
   created_at: string;
+  doc_type: "document" | "summary";
+  summary_content?: string;
 }
 
 interface GroupedResults {
@@ -25,6 +28,37 @@ interface Gap {
   topic: string;
 }
 
+interface SummaryModalProps {
+  summary: string;
+  onClose: () => void;
+}
+
+const SummaryModal: React.FC<SummaryModalProps> = ({ summary, onClose }) => {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg w-[80%] max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+        <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+          <h3 className="text-lg font-semibold">Chat Summary</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto">
+          <div
+            className="prose max-w-none"
+            dangerouslySetInnerHTML={{
+              __html: DOMPurify.sanitize(summary),
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function SearchKnowledge() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<GroupedResults>({});
@@ -33,6 +67,7 @@ export default function SearchKnowledge() {
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [selectedSummary, setSelectedSummary] = useState<string | null>(null);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,6 +98,14 @@ export default function SearchKnowledge() {
       setIsLoading(false);
     }
     setHasSearched(true);
+  };
+
+  const handleDocumentClick = (doc: SearchResult) => {
+    if (doc.doc_type === "summary" && doc.summary_content) {
+      setSelectedSummary(doc.summary_content);
+    } else if (doc.fileLink) {
+      window.open(doc.fileLink, "_blank");
+    }
   };
 
   return (
@@ -133,57 +176,64 @@ export default function SearchKnowledge() {
               >
                 <div className="flex justify-between items-start">
                   <div>
-                    <h3 className="text-lg font-semibold">{doc.filename}</h3>
+                    <h3 className="text-lg font-semibold">
+                      {doc.doc_type === "summary"
+                        ? "Chat Summary"
+                        : doc.filename}
+                    </h3>
                     <p className="text-sm text-gray-600">
-                      Type: {doc.meme_type}
+                      Type:{" "}
+                      {doc.doc_type === "summary" ? "Summary" : doc.meme_type}
                     </p>
-                    <p className="text-sm text-gray-600">
-                      Original File:{" "}
-                      <span
-                        className={`${
-                          doc.original_filename
-                            .toLowerCase()
-                            .includes(searchQuery.toLowerCase())
-                            ? "bg-yellow-100 px-1 rounded"
-                            : ""
-                        }`}
-                      >
-                        {doc.original_filename}
-                      </span>
-                    </p>
+                    {doc.doc_type === "document" && (
+                      <p className="text-sm text-gray-600">
+                        Original File:{" "}
+                        <span
+                          className={`${
+                            doc.original_filename
+                              .toLowerCase()
+                              .includes(searchQuery.toLowerCase())
+                              ? "bg-yellow-100 px-1 rounded"
+                              : ""
+                          }`}
+                        >
+                          {doc.original_filename}
+                        </span>
+                      </p>
+                    )}
                   </div>
-                  {doc.fileLink && (
-                    <a
-                      href={doc.fileLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 text-blue-600 hover:text-blue-800"
-                    >
-                      Open File <ExternalLink className="h-4 w-4" />
-                    </a>
+                  <button
+                    onClick={() => handleDocumentClick(doc)}
+                    className="flex items-center gap-2 text-blue-600 hover:text-blue-800"
+                  >
+                    {doc.doc_type === "summary" ? "View Summary" : "Open File"}{" "}
+                    <ExternalLink className="h-4 w-4" />
+                  </button>
+                </div>
+                {doc.doc_type === "document" &&
+                  doc.matched_keywords.length > 0 && (
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">
+                        Matched Keywords:
+                      </p>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {doc.matched_keywords.map((keyword, idx) => (
+                          <span
+                            key={idx}
+                            className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+                          >
+                            {keyword}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   )}
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-700">
-                    Matched Keywords:
-                  </p>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {doc.matched_keywords.map((keyword, idx) => (
-                      <span
-                        key={idx}
-                        className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
-                      >
-                        {keyword}
-                      </span>
-                    ))}
-                  </div>
-                </div>
                 <div className="text-sm text-gray-600">
                   <p>Author: {doc.author}</p>
                   <p>
                     Created: {new Date(doc.created_at).toLocaleDateString()}
                   </p>
-                  <p>Field: {doc.field}</p>
+                  {doc.field && <p>Field: {doc.field}</p>}
                 </div>
               </div>
             ))}
@@ -196,6 +246,14 @@ export default function SearchKnowledge() {
           </div>
         )}
       </div>
+
+      {/* Summary Modal */}
+      {selectedSummary && (
+        <SummaryModal
+          summary={selectedSummary}
+          onClose={() => setSelectedSummary(null)}
+        />
+      )}
     </div>
   );
 }

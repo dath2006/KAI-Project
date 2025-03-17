@@ -42,6 +42,21 @@ class KnowledgeGraph:
             )
             
         return doc_id
+    
+    def add_document_with_summary(self, title, summary, author_id, author_name):
+        """
+        Add a document with a summary to the knowledge graph
+        """
+        doc_id = str(uuid.uuid4())
+        
+        with self.driver.session() as session:
+            session.run(
+                "CREATE (d:Document {id: $id, title: $title, content: $content, author_id: $author_id, author_name: $author_name, created_at: datetime()})",
+                id=doc_id, title=title, content=summary, author_id=author_id, author_name=author_name
+            )
+            
+        return doc_id   
+    
         
     def add_expert(self, name, email, expertise_areas):
         """
@@ -209,3 +224,78 @@ class KnowledgeGraph:
                      for record in result]
             
             return experts  # Fixed indentation issue at line 211
+
+    def add_chat_summary(self, topic, summary, author_id, author_name):
+        """
+        Add a chat summary as a separate Summary node in the knowledge graph
+        """
+        summary_id = str(uuid.uuid4())
+        
+        with self.driver.session() as session:
+            session.run(
+                """
+                CREATE (s:Summary {
+                    id: $id,
+                    topic: $topic,
+                    content: $summary,
+                    author_id: $author_id,
+                    author_name: $author_name,
+                    type: 'chat_summary',
+                    created_at: datetime()
+                })
+                """,
+                id=summary_id,
+                topic=topic,
+                summary=summary,
+                author_id=author_id,
+                author_name=author_name
+            )
+            
+        return summary_id
+    
+    def get_documents_for_field(self, field):
+         """
+         Retrieve documents from Neo4j that match the user's learning field.
+         In this example, we check if the Document's 'field' property
+         matches the user's field (case-insensitive).
+         """
+         with self.driver.session() as session:
+            result = session.run(
+            """
+            MATCH (d:Document)
+            WHERE toLower(d.field) = toLower($field)
+            OR ANY(kw IN d.keywords WHERE toLower(kw) CONTAINS toLower($field))
+            RETURN
+                d.id as id,
+                d.title as title,
+                d.filename as filename,
+                d.fileLink as fileLink,
+                d.original_filename as original_filename,
+                d.author_name as author_name,
+                d.field as field,
+                d.keywords as keywords,
+                d.meme_type as meme_type,
+                toString(d.created_at) as created_at
+            ORDER BY d.created_at DESC
+            LIMIT 10
+            """,
+            field=field
+        )
+
+            docs = []
+            for record in result:
+                doc = {
+                "id": record["id"],
+                "title": record["title"],
+                "filename": record["filename"],
+                "fileLink": record["fileLink"],
+                "original_filename": record["original_filename"],
+                "author_name": record["author_name"],
+                "field": record["field"],
+                "keywords": record["keywords"],
+                "meme_type": record["meme_type"],
+                "created_at": record["created_at"]
+            }
+            docs.append(doc)
+            return docs
+

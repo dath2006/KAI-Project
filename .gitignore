@@ -4,3 +4,6 @@
 backend/__pycache__
 frontend/node_modules
 backend/credentials.json
+backend/Model/__pycache__
+backend/Model/original/
+backend/Model/model.safetensors

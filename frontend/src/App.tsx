@@ -13,6 +13,9 @@ import AdminDashboard from "./pages/AdminDashboard";
 import SearchKnowledge from "./pages/SearchKnowledge";
 import ShareKnowledge from "./pages/ShareKnowledge";
 import ChatWithAI from "./pages/ChatWithAI";
+import ChatQA from "./pages/ChatQA";
+import KnowledgeGaps from "./pages/KnowledgeGaps";
+import UploadKnowledge from "./pages/UploadKnowledge";
 
 function App() {
   return (
@@ -57,6 +60,11 @@ function App() {
             <Route path="/user/search" element={<SearchKnowledge />} />
             <Route path="/user/share" element={<ShareKnowledge />} />
             <Route path="/user/chat" element={<ChatWithAI />} />
+            <Route path="/user/upload" element={<UploadKnowledge />} />
+            {/* Chat QA Route */}
+            <Route path="/user/ai-chat" element={<ChatQA />} />
+            <Route path="/admin/gaps" element={<KnowledgeGaps />} />
+            <Route path="/admin/upload" element={<UploadKnowledge />} />
           </Routes>
         </div>
       </Router>
